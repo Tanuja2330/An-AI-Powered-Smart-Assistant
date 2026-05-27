@@ -1,0 +1,518 @@
+import React, { useEffect, useState, useRef } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ActivityIndicator,
+  Alert,
+  TouchableOpacity,
+  Dimensions,
+  ScrollView
+} from 'react-native';
+import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
+import * as Location from 'expo-location';
+import * as Speech from 'expo-speech';
+import { createStackNavigator } from '@react-navigation/stack';
+import MapScreen from './MapScreen';
+
+const Stack = createStackNavigator();
+
+function App() {
+  return (
+    <NavigationContainer>
+      <Stack.Navigator>
+        <Stack.Screen name="Map" component={MapScreen} />
+      </Stack.Navigator>
+    </NavigationContainer>
+  );
+}
+
+
+export default function NavigationScreen() {
+  const [location, setLocation] = useState(null);
+  const [errorMsg, setErrorMsg] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [locationAddress, setLocationAddress] = useState(null);
+  const [watchId, setWatchId] = useState(null);
+  const [destination, setDestination] = useState(null);
+  const [isNavigating, setIsNavigating] = useState(false);
+  const [announceInterval, setAnnounceInterval] = useState(null);
+  const [routeDistance, setRouteDistance] = useState(null);
+  const [routeDirections, setRouteDirections] = useState([]);
+  
+  const mapRef = useRef(null);
+  
+  // Example destinations - replace with real data from API in production
+  const presetDestinations = [
+    { name: "Hospital", latitude: 19.9975, longitude: 73.7898 },
+    { name: "Pharmacy", latitude: 19.9945, longitude: 73.7928 },
+    { name: "Home", latitude: 19.9915, longitude: 73.7858 }
+  ];
+
+  // Initialize location services
+  useEffect(() => {
+    (async () => {
+      try {
+        let { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== 'granted') {
+          setErrorMsg('Permission to access location was denied');
+          setLoading(false);
+          return;
+        }
+
+        const loc = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Highest
+        });
+        setLocation(loc.coords);
+        
+        // Get address for current location
+        const address = await reverseGeocode(loc.coords);
+        setLocationAddress(address);
+        
+        // Announce current location
+        speakCurrentLocation(address);
+        
+        // Start tracking location updates
+        startLocationTracking();
+        
+        setLoading(false);
+      } catch (error) {
+        console.error('Error initializing location:', error);
+        setErrorMsg('Failed to get your location. Please try again.');
+        setLoading(false);
+      }
+    })();
+
+    // Cleanup function
+    return () => {
+      if (watchId !== null) {
+        Location.removeWatcher(watchId);
+      }
+      if (announceInterval) {
+        clearInterval(announceInterval);
+      }
+      Speech.stop();
+    };
+  }, []);
+
+  // Start watching location updates
+  const startLocationTracking = async () => {
+    try {
+      const watch = await Location.watchPositionAsync(
+        {
+          accuracy: Location.Accuracy.BestForNavigation,
+          timeInterval: 3000,
+          distanceInterval: 5, // Update every 5 meters
+        },
+        (newLocation) => {
+          setLocation(newLocation.coords);
+          
+          // If navigating, update guidance
+          if (isNavigating && destination) {
+            updateNavigation(newLocation.coords, destination);
+          }
+        }
+      );
+      setWatchId(watch);
+    } catch (error) {
+      console.error('Error watching location:', error);
+    }
+  };
+
+  // Convert coordinates to address
+  const reverseGeocode = async (coords) => {
+    try {
+      const geocode = await Location.reverseGeocodeAsync({
+        latitude: coords.latitude,
+        longitude: coords.longitude,
+      });
+
+      if (geocode.length > 0) {
+        const place = geocode[0];
+        return `${place.name || ''}, ${place.street || ''}, ${place.city || ''}, ${place.region || ''}`.replace(/(, )+/g, ", ").trim();
+      }
+      return "Unknown location";
+    } catch (error) {
+      console.error('Error reverse geocoding:', error);
+      return "Location information unavailable";
+    }
+  };
+
+  // Speak current location
+  const speakCurrentLocation = (address) => {
+    const message = `You are currently at ${address || 'an unknown location'}`;
+    Speech.speak(message, { rate: 0.9 });
+  };
+
+  // Start navigation to a destination
+  const startNavigation = (dest) => {
+    setDestination(dest);
+    setIsNavigating(true);
+    
+    // Announce starting navigation
+    const message = `Starting navigation to ${dest.name}. I will guide you along the way.`;
+    Speech.speak(message, { rate: 0.9 });
+    
+    // Calculate route info (in production, use a proper routing API)
+    calculateRouteInfo(location, dest);
+    
+    // Update map to show route
+    if (mapRef.current && location) {
+      mapRef.current.fitToCoordinates(
+        [
+          { latitude: location.latitude, longitude: location.longitude },
+          { latitude: dest.latitude, longitude: dest.longitude }
+        ],
+        { edgePadding: { top: 50, right: 50, bottom: 50, left: 50 }, animated: true }
+      );
+    }
+    
+    // Start regular announcements
+    const interval = setInterval(() => {
+      if (location && dest) {
+        updateNavigation(location, dest);
+      }
+    }, 30000); // Update every 30 seconds
+    
+    setAnnounceInterval(interval);
+  };
+
+  // Stop navigation
+  const stopNavigation = () => {
+    setIsNavigating(false);
+    setDestination(null);
+    setRouteDistance(null);
+    setRouteDirections([]);
+    
+    if (announceInterval) {
+      clearInterval(announceInterval);
+      setAnnounceInterval(null);
+    }
+    
+    Speech.speak("Navigation stopped", { rate: 0.9 });
+  };
+
+  // Calculate simple route information
+  // In production, replace with calls to a real routing API like Google Directions API or OpenStreetMap
+  const calculateRouteInfo = (start, end) => {
+    if (!start || !end) return;
+    
+    // Calculate distance between points using Haversine formula
+    const R = 6371; // Radius of the Earth in km
+    const dLat = deg2rad(end.latitude - start.latitude);
+    const dLon = deg2rad(end.longitude - start.longitude);
+    const a = 
+      Math.sin(dLat/2) * Math.sin(dLat/2) +
+      Math.cos(deg2rad(start.latitude)) * Math.cos(deg2rad(end.latitude)) * 
+      Math.sin(dLon/2) * Math.sin(dLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
+    const distance = R * c * 1000; // Distance in meters
+    
+    setRouteDistance(distance);
+    
+    // Generate simplified directions (would come from routing API in production)
+    const bearing = calculateBearing(start, end);
+    const directionText = getBearingDirection(bearing);
+    
+    setRouteDirections([
+      `Head ${directionText} for approximately ${Math.round(distance)} meters to reach ${end.name}.`
+    ]);
+    
+    return distance;
+  };
+
+  // Update navigation guidance based on current position
+  const updateNavigation = (currentPosition, dest) => {
+    if (!currentPosition || !dest) return;
+    
+    const distance = calculateRouteInfo(currentPosition, dest);
+    
+    // When close to destination
+    if (distance && distance < 20) {
+      Speech.speak(`You are approaching your destination, ${dest.name}. You are about ${Math.round(distance)} meters away.`, { rate: 0.9 });
+      
+      // If arrived (within 10 meters)
+      if (distance < 10) {
+        Speech.speak(`You have arrived at ${dest.name}.`, { rate: 0.9 });
+        stopNavigation();
+        return;
+      }
+    } else if (distance) {
+      // Regular updates during navigation
+      const bearing = calculateBearing(currentPosition, dest);
+      const directionText = getBearingDirection(bearing);
+      
+      Speech.speak(`Continue ${directionText} for ${Math.round(distance)} meters to reach ${dest.name}.`, { rate: 0.9 });
+    }
+  };
+
+  // Helper function to convert degrees to radians
+  const deg2rad = (deg) => {
+    return deg * (Math.PI/180);
+  };
+
+  // Calculate bearing between two points
+  const calculateBearing = (start, end) => {
+    const startLat = deg2rad(start.latitude);
+    const startLng = deg2rad(start.longitude);
+    const destLat = deg2rad(end.latitude);
+    const destLng = deg2rad(end.longitude);
+    
+    const y = Math.sin(destLng - startLng) * Math.cos(destLat);
+    const x = Math.cos(startLat) * Math.sin(destLat) -
+              Math.sin(startLat) * Math.cos(destLat) * Math.cos(destLng - startLng);
+    let brng = Math.atan2(y, x);
+    brng = (brng * 180 / Math.PI + 360) % 360; // in degrees
+    
+    return brng;
+  };
+  
+
+  // Convert bearing to cardinal direction
+  const getBearingDirection = (bearing) => {
+    const directions = ['north', 'northeast', 'east', 'southeast', 'south', 'southwest', 'west', 'northwest'];
+    const index = Math.round(bearing / 45) % 8;
+    return directions[index];
+  };
+
+  // Announce the user's current location on demand
+  const announceCurrentLocation = async () => {
+    if (location) {
+      const address = await reverseGeocode(location);
+      speakCurrentLocation(address);
+    } else {
+      Speech.speak("Unable to determine your current location", { rate: 0.9 });
+    }
+  };
+
+  // Handle errors in location services
+  useEffect(() => {
+    if (errorMsg) {
+      Alert.alert("Location Error", errorMsg);
+      Speech.speak(`There was a problem with location services: ${errorMsg}`, { rate: 0.9 });
+    }
+  }, [errorMsg]);
+
+  // Render loading state
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#0000ff" />
+        <Text style={styles.loadingText}>Getting your location...</Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.container}>
+      {/* Map view */}
+      <View style={styles.mapContainer}>
+        {location && (
+          <MapView
+            ref={mapRef}
+            provider={PROVIDER_GOOGLE}
+            style={styles.map}
+            initialRegion={{
+              latitude: location.latitude,
+              longitude: location.longitude,
+              latitudeDelta: 0.005,
+              longitudeDelta: 0.005,
+            }}
+            showsUserLocation
+            followsUserLocation
+            accessible={true}
+            accessibilityLabel="Navigation map showing your location and destination"
+          >
+            {/* User location marker */}
+            <Marker
+              coordinate={{
+                latitude: location.latitude,
+                longitude: location.longitude,
+              }}
+              title="You are here"
+              description={locationAddress || "Your current location"}
+            />
+            
+            {/* Destination marker */}
+            {destination && (
+              <Marker
+                coordinate={{
+                  latitude: destination.latitude,
+                  longitude: destination.longitude,
+                }}
+                title={destination.name}
+                description={`Your destination: ${destination.name}`}
+                pinColor="green"
+              />
+            )}
+            
+            {/* Route line */}
+            {destination && (
+              <Polyline
+                coordinates={[
+                  { latitude: location.latitude, longitude: location.longitude },
+                  { latitude: destination.latitude, longitude: destination.longitude }
+                ]}
+                strokeWidth={4}
+                strokeColor="#0066FF"
+              />
+            )}
+          </MapView>
+        )}
+      </View>
+      
+      {/* Current location info */}
+      <View style={styles.infoContainer}>
+        <Text style={styles.locationText}>
+          Current Location: {locationAddress || "Determining location..."}
+        </Text>
+        
+        <TouchableOpacity 
+          style={styles.announceButton}
+          onPress={announceCurrentLocation}
+          accessible={true}
+          accessibilityLabel="Announce my current location"
+          accessibilityHint="Tapping this will speak your current location out loud"
+        >
+          <Text style={styles.buttonText}>Announce My Location</Text>
+        </TouchableOpacity>
+      </View>
+      
+      {/* Navigation controls */}
+      <View style={styles.navigationContainer}>
+        {isNavigating ? (
+          <View>
+            <Text style={styles.headingText}>
+              Navigating to: {destination ? destination.name : ""}
+            </Text>
+            
+            {routeDistance && (
+              <Text style={styles.distanceText}>
+                Distance: {Math.round(routeDistance)} meters
+              </Text>
+            )}
+            
+            {routeDirections.length > 0 && (
+              <Text style={styles.directionsText}>
+                {routeDirections[0]}
+              </Text>
+            )}
+            
+            <TouchableOpacity 
+              style={styles.stopButton}
+              onPress={stopNavigation}
+              accessible={true}
+              accessibilityLabel="Stop navigation"
+              accessibilityHint="Tapping this will stop the current navigation"
+            >
+              <Text style={styles.buttonText}>Stop Navigation</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <View>
+            <Text style={styles.headingText}>Select Destination:</Text>
+            <ScrollView style={styles.destinationList}>
+              {presetDestinations.map((dest, index) => (
+                <TouchableOpacity
+                  key={index}
+                  style={styles.destinationItem}
+                  onPress={() => startNavigation(dest)}
+                  accessible={true}
+                  accessibilityLabel={`Navigate to ${dest.name}`}
+                  accessibilityHint={`Tapping this will start navigation to ${dest.name}`}
+                >
+                  <Text style={styles.destinationText}>{dest.name}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        )}
+      </View>
+    </View>
+  );
+}
+
+// Styles
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#F5F5F5',
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#F5F5F5',
+  },
+  loadingText: {
+    marginTop: 10,
+    fontSize: 16,
+  },
+  mapContainer: {
+    height: Dimensions.get('window').height * 0.5,
+    width: '100%',
+    borderBottomWidth: 1,
+    borderBottomColor: '#DDD',
+  },
+  map: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  infoContainer: {
+    padding: 15,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#DDD',
+  },
+  locationText: {
+    fontSize: 16,
+    marginBottom: 10,
+  },
+  announceButton: {
+    backgroundColor: '#4285F4',
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  navigationContainer: {
+    flex: 1,
+    padding: 15,
+    backgroundColor: '#FFFFFF',
+  },
+  headingText: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 10,
+  },
+  distanceText: {
+    fontSize: 16,
+    marginBottom: 5,
+  },
+  directionsText: {
+    fontSize: 16,
+    marginBottom: 15,
+  },
+  destinationList: {
+    maxHeight: 200,
+  },
+  destinationItem: {
+    backgroundColor: '#E8F0FE',
+    padding: 15,
+    borderRadius: 8,
+    marginBottom: 10,
+  },
+  destinationText: {
+    fontSize: 16,
+  },
+  buttonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  stopButton: {
+    backgroundColor: '#DB4437',
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 10,
+  },
+});

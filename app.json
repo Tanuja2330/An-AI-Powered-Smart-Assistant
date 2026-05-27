@@ -1,0 +1,63 @@
+{
+    "expo": {
+      "name": "GuideX",
+      "slug": "guidex",
+      "version": "1.0.0",
+      "orientation": "portrait",
+      "icon": "./assets/icon.png",
+      "userInterfaceStyle": "light",
+      "splash": {
+        "image": "./assets/splash.png",
+        "resizeMode": "contain",
+        "backgroundColor": "#ffffff"
+      },
+      "assetBundlePatterns": [
+        "**/*"
+      ],
+      "ios": {
+        "supportsTablet": true,
+        "infoPlist": {
+          "UIBackgroundModes": ["location", "fetch"]
+        }
+      },
+      "android": {
+        "adaptiveIcon": {
+          "foregroundImage": "./assets/adaptive-icon.png",
+          "backgroundColor": "#ffffff"
+        },
+        "permissions": [
+          "CAMERA",
+          "ACCESS_FINE_LOCATION",
+          "ACCESS_COARSE_LOCATION",
+          "VIBRATE",
+          "SEND_SMS",
+          "RECEIVE_SMS",
+          "READ_EXTERNAL_STORAGE",
+          "WRITE_EXTERNAL_STORAGE"
+        ]
+      },
+      "web": {
+        "favicon": "./assets/favicon.png"
+      },
+      "plugins": [
+        [
+          "expo-location",
+          {
+            "locationAlwaysAndWhenInUsePermission": "Allow GuideX to use your location to detect falls and provide emergency assistance."
+          }
+        ],
+        [
+          "expo-camera",
+          {
+            "cameraPermission": "Allow GuideX to access your camera to capture photos during emergencies."
+          }
+        ],
+        [
+          "expo-sensors",
+          {
+            "motionPermission": "Allow GuideX to access your device sensors to detect falls."
+          }
+        ]
+      ]
+    }
+  }
